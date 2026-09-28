@@ -342,3 +342,19 @@ p { margin: 0; text-wrap: pretty; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Added: language toggle, try-on-phone dialog, photo-quality note, per-item reason */
+.pill-btn { border: 0; cursor: pointer; font: inherit; }
+.pill-btn:hover { background: var(--secondary-c); }
+.pill-btn .ph { font-size: 1rem; }
+.quality-note { display: flex; gap: .55rem; align-items: flex-start; padding: .8rem 1rem; font-size: 13px; font-weight: 600; background: var(--warn-c); color: var(--on-warn-c); border-color: transparent; box-shadow: none; }
+.quality-note .ph { font-size: 1.15rem; }
+.why { display: flex; gap: .55rem; align-items: flex-start; font-size: 13px; color: var(--ink); }
+.why .ph { color: var(--s-ink); font-size: 1.15rem; }
+.quality-note[hidden], .why[hidden], #speak[hidden] { display: none; }
+#speak { justify-self: start; }
+.phone-dlg { max-width: 340px; width: calc(100% - 2rem); padding: 1.5rem; text-align: center; color: var(--ink); }
+.phone-dlg::backdrop { background: rgba(15, 30, 23, .45); }
+.phone-dlg p { color: var(--ink-2); font-size: 13px; margin: .5rem 0; }
+.phone-qr { display: grid; place-items: center; margin: 1rem 0 .5rem; }
+.phone-url { font-family: var(--mono); font-size: 14px; color: var(--primary) !important; word-break: break-all; }

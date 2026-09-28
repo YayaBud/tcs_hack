@@ -26,6 +26,8 @@
         </span>
       </div>
       <div class="topbar-right">
+        <button id="lang-toggle" class="pill pill-muted pill-btn" type="button"><i class="ph ph-translate" aria-hidden="true"></i><span class="lang-label">हिन्दी</span></button>
+        <button id="phone-btn" class="pill pill-muted pill-btn" type="button"><i class="ph ph-device-mobile" aria-hidden="true"></i>Try on phone</button>
         <span id="mock-badge" class="pill pill-warn" hidden>Mock data</span>
         <span id="llm-status" class="pill pill-green" title="Gemini reviews each result">
           <span class="dot" aria-hidden="true"></span><span class="status-label">Gemini</span>
@@ -40,7 +42,7 @@
         <i class="ph ph-sun-dim" aria-hidden="true"></i>Low light detected, photo auto-brightened
       </p>
       <p class="strip-item strip-muted">
-        <i class="ph ph-lock-simple" aria-hidden="true"></i>Your photo never leaves this laptop. Only item names go to Gemini.
+        <i class="ph ph-lock-simple" aria-hidden="true"></i>Read on this laptop first. A resized copy goes to Gemini to double-check. Nothing is stored.
       </p>
     </div>
   </div>
@@ -134,6 +136,8 @@
         <div class="review-sk" aria-hidden="true"><div class="sk w90"></div><div class="sk w70"></div></div>
       </section>
 
+      <p id="quality" class="card quality-note" hidden><i class="ph" aria-hidden="true"></i><span class="quality-text"></span></p>
+      <button id="speak" class="btn secondary" type="button" hidden><i class="ph ph-speaker-high" aria-hidden="true"></i>Read aloud</button>
       <div id="results" class="items"></div>
       <p id="message" class="card empty-inline" hidden></p>
 
@@ -180,6 +184,14 @@
     </div>
   </footer>
 
+  <dialog id="phone-dlg" class="card phone-dlg" aria-labelledby="phone-title">
+    <h3 id="phone-title">Scan on your phone</h3>
+    <p>Open this address on a phone connected to the same Wi-Fi or hotspot as this laptop.</p>
+    <div id="phone-qr" class="phone-qr"></div>
+    <p id="phone-url" class="phone-url"></p>
+    <form method="dialog"><button class="btn primary" type="submit">Done</button></form>
+  </dialog>
+
   <template id="item-tpl">
     <article class="card item">
       <div class="item-top">
@@ -190,6 +202,7 @@
         </div>
         <span class="bin-pill"><span class="bin-dot" aria-hidden="true"></span><span class="bin"></span></span>
       </div>
+      <p class="why" hidden><i class="ph ph-question" aria-hidden="true"></i><span class="why-text"></span></p>
       <div class="prep">
         <span class="label">Preparation steps</span>
         <ol class="steps"></ol>

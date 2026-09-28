@@ -65,7 +65,11 @@ JUDGE_PROMPT = ("You are a waste-segregation expert for India (Swachh Bharat: GR
                 "If the photo is blurry, dark or low quality, still give your best guess from shape and colour. For each waste item give: short name, material (one of: "
                 f"{MAT_LIST}), whether it is commonly recyclable in India, 2-4 short practical disposal steps, "
                 "and one short educational eco tip (no invented statistics, never suggest burning). "
-                "If there is no waste, return an empty items list.")
+                "For each item also give a one-sentence reason why it belongs in that stream. "
+                "Rate the photo: quality 'good', 'blurry', 'dark' or 'cluttered'; if it is not good, give a "
+                "one-line retake tip in quality_tip. If there is no waste, return an empty items list.")
+HINDI = (" Write name, disposal steps, eco_tip, reason and quality_tip in simple Hindi (Devanagari script). "
+         "Keep material and quality values exactly as the English options listed.")
 LOCAL_PROMPT = ("List each separate waste item in this photo. For each: short name, main material "
                 f"({MAT_LIST}), and whether it is commonly recyclable in India. No waste -> empty list.")
 
@@ -73,11 +77,15 @@ LOCAL_SCHEMA = {"type": "object", "required": ["items"], "properties": {"items":
     "type": "object", "required": ["name", "material", "recyclable"], "properties": {
         "name": {"type": "string"}, "material": {"type": "string", "enum": MATERIALS},
         "recyclable": {"type": "boolean"}}}}}}
-JUDGE_SCHEMA = {"type": "OBJECT", "required": ["items"], "properties": {"items": {"type": "ARRAY", "items": {
-    "type": "OBJECT", "required": ["name", "material", "recyclable", "disposal", "eco_tip"], "properties": {
-        "name": {"type": "STRING"}, "material": {"type": "STRING", "enum": MATERIALS},
-        "recyclable": {"type": "BOOLEAN"}, "disposal": {"type": "ARRAY", "items": {"type": "STRING"}},
-        "eco_tip": {"type": "STRING"}}}}}}
+JUDGE_SCHEMA = {"type": "OBJECT", "required": ["items", "quality"], "properties": {
+    "quality": {"type": "STRING", "enum": ["good", "blurry", "dark", "cluttered"]},
+    "quality_tip": {"type": "STRING"},
+    "items": {"type": "ARRAY", "items": {
+        "type": "OBJECT", "required": ["name", "material", "recyclable", "disposal", "eco_tip", "reason"],
+        "properties": {
+            "name": {"type": "STRING"}, "material": {"type": "STRING", "enum": MATERIALS},
+            "recyclable": {"type": "BOOLEAN"}, "disposal": {"type": "ARRAY", "items": {"type": "STRING"}},
+            "eco_tip": {"type": "STRING"}, "reason": {"type": "STRING"}}}}}}
 
 
 def post_json(url, body, headers=None, timeout=120):
@@ -97,11 +105,12 @@ def ollama(prompt, images, schema=None, max_tokens=200):
     return post_json(f"{OLLAMA}/api/chat", body)["message"]["content"]
 
 
-def gemini_judge(raw, image_b64):
+def gemini_judge(raw, image_b64, lang="en"):
     # Judge sees the photo too: fixes the small model's misses on blurry / dark / cluttered shots.
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    prompt = JUDGE_PROMPT.format(raw=raw) + (HINDI if lang == "hi" else "")
     body = {"contents": [{"parts": [{"inline_data": {"mime_type": "image/jpeg", "data": image_b64}},
-                                    {"text": JUDGE_PROMPT.format(raw=raw)}]}],
+                                    {"text": prompt}]}],
             "generationConfig": {"temperature": 0, "responseMimeType": "application/json",
                                  "responseSchema": JUDGE_SCHEMA}}
     res = post_json(url, body, {"x-goog-api-key": GEMINI_KEY}, timeout=30)
@@ -116,24 +125,28 @@ def normalise(items):
         disposal = [str(s)[:160] for s in (it.get("disposal") or []) if str(s).strip()][:4] or steps
         out.append({"name": str(it.get("name") or "Item")[:80], "material": mat, "stream": STREAM[mat],
                     "recyclable": bool(it.get("recyclable")), "disposal": disposal,
-                    "eco_tip": str(it.get("eco_tip") or tip)[:200]})
+                    "eco_tip": str(it.get("eco_tip") or tip)[:200], "reason": str(it.get("reason") or "")[:200]})
     return out
 
 
-def classify(image_b64):
+def classify(image_b64, lang="en"):
     t0 = time.perf_counter()
     raw = ollama(VLM_PROMPT, [image_b64], max_tokens=120).strip()
     t1 = time.perf_counter()
-    judge, note = GEMINI_MODEL, ""
+    judge, note, quality, quality_tip = GEMINI_MODEL, "", "unknown", ""
     try:
         if not GEMINI_KEY:
             raise RuntimeError("GEMINI_API_KEY not set")
         try:
-            items = gemini_judge(raw, image_b64)["items"]
+            verdict = gemini_judge(raw, image_b64, lang)
         except Exception:  # one retry: Gemini blips with 503 under load
-            items = gemini_judge(raw, image_b64)["items"]
+            verdict = gemini_judge(raw, image_b64, lang)
+        items = verdict["items"]
+        quality, quality_tip = verdict.get("quality", "unknown"), str(verdict.get("quality_tip") or "")[:200]
     except Exception as e:  # offline / no key / bad reply -> local-only verdict
         judge, note = "local", f"Judge unavailable ({type(e).__name__}: {str(e)[:120]}); local model only."
+        if lang == "hi":
+            note += " Hindi answers need the online judge."
         try:
             items = json.loads(ollama(LOCAL_PROMPT, [image_b64], LOCAL_SCHEMA, 800)).get("items", [])[:8]
         except json.JSONDecodeError:  # small model ran out of tokens on a busy photo
@@ -141,6 +154,7 @@ def classify(image_b64):
     t2 = time.perf_counter()
     items = normalise(items)
     return {"items": items, "message": "" if items else "No waste item found - try a closer photo.",
+            "quality": quality, "quality_tip": quality_tip, "lang": lang,
             "raw": raw, "model": VLM_MODEL, "vlm": VLM_MODEL, "judge": judge, "note": note,
             "ms": round((t2 - t0) * 1000),  # frontend reads a number
             "timing": {"vlm": round((t1 - t0) * 1000), "judge": round((t2 - t1) * 1000)}}
@@ -158,7 +172,8 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path != "/api/health":
             return super().do_GET()
-        h = {"vlm": VLM_MODEL, "vlm_ok": False, "judge": GEMINI_MODEL, "judge_ok": False}
+        h = {"vlm": VLM_MODEL, "vlm_ok": False, "judge": GEMINI_MODEL, "judge_ok": False,
+             "lan_url": f"http://{lan_ip()}:{PORT}"}
         try:
             with urllib.request.urlopen(f"{OLLAMA}/api/tags", timeout=3) as r:
                 h["vlm_ok"] = any(m["name"] == VLM_MODEL for m in json.loads(r.read())["models"])
@@ -180,20 +195,33 @@ class Handler(SimpleHTTPRequestHandler):
         if n > MAX_BODY:
             return self._json(413, {"error": "Image too large"})
         try:
-            image = json.loads(self.rfile.read(n) or b"{}").get("image")
+            body = json.loads(self.rfile.read(n) or b"{}")
+            image = body.get("image")
         except (json.JSONDecodeError, AttributeError):
             return self._json(400, {"error": "Body must be JSON"})
+        lang = body.get("lang") if body.get("lang") in ("en", "hi") else "en"
         if not isinstance(image, str) or not image:
             return self._json(400, {"error": "Missing 'image' (base64)"})
         image = image.split(",", 1)[-1] if image.startswith("data:") else image
         try:
-            self._json(200, classify(image))
+            self._json(200, classify(image, lang))
         except urllib.error.HTTPError as e:
             self._json(502, {"error": f"Local model error {e.code}: {e.read().decode(errors='replace')[:200]}"})
         except urllib.error.URLError as e:
             self._json(503, {"error": f"Local model unavailable - is Ollama running? ({e.reason})"})
         except Exception as e:
             self._json(502, {"error": f"Model error: {e}"})
+
+
+def blank_png_b64(size=640):  # 640 = frontend MAX_SIDE; smaller warm-up left first scan at ~13 s
+    """White PNG built with stdlib only: used to warm up the VLM's vision path at startup."""
+    import base64, struct, zlib
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    rows = b"".join(b"\x00" + b"\xff" * (size * 3) for _ in range(size))
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+    return base64.b64encode(png).decode()
 
 
 def lan_ip():
@@ -209,10 +237,10 @@ if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
     static = os.path.join(here, "static")
     os.makedirs(static, exist_ok=True)
-    try:  # load the VLM into VRAM now so the first demo shot is fast
+    try:  # run one tiny image through the VLM now: a text-only load left the first real scan at ~24 s
         t = time.perf_counter()
-        post_json(f"{OLLAMA}/api/generate", {"model": VLM_MODEL, "prompt": "", "keep_alive": "60m"})
-        print(f"VLM {VLM_MODEL} loaded in {time.perf_counter() - t:.1f}s")
+        ollama("Describe this image in one word.", [blank_png_b64()], max_tokens=5)
+        print(f"VLM {VLM_MODEL} warmed up (vision) in {time.perf_counter() - t:.1f}s")
     except Exception as e:
         print(f"WARNING: could not load {VLM_MODEL} ({e}). Is Ollama running?")
     print(f"Judge: {GEMINI_MODEL}" if GEMINI_KEY else "Judge: OFF (set GEMINI_API_KEY) - local-only mode")

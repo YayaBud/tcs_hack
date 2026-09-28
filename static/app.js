@@ -25,7 +25,24 @@ const el = {
   review: $('review'), reviewText: $('review-text'), reviewMeta: $('review-meta'),
   scanState: $('scan-state'), modelTime: $('model-time'),
   diverted: $('metric-diverted'), lastTime: $('metric-time'),
+  quality: $('quality'), speak: $('speak'), langToggle: $('lang-toggle'),
+  phoneBtn: $('phone-btn'), phoneDlg: $('phone-dlg'), phoneUrl: $('phone-url'), phoneQr: $('phone-qr'),
 };
+
+// Hindi mode: the server judge writes item text in Hindi; bins/labels are translated here.
+const HI = {
+  label: { wet: 'गीला कचरा', dry: 'सूखा कचरा', hazardous: 'हानिकारक कचरा', 'e-waste': 'ई-कचरा', unknown: 'पता नहीं' },
+  bin: { wet: 'हरा डिब्बा', dry: 'नीला डिब्बा', hazardous: 'अलग रखें, मिलाएँ नहीं', 'e-waste': 'ई-कचरा संग्रहकर्ता', unknown: 'स्थानीय संग्रहकर्ता से पूछें' },
+  yes: 'रीसायकल योग्य', no: 'रीसायकल योग्य नहीं',
+};
+const QUALITY = { // [icon, English, Hindi]
+  blurry: ['ph-drop', 'Blurry photo, analysed anyway.', 'धुंधली फ़ोटो, फिर भी जाँची गई।'],
+  dark: ['ph-moon', 'Dark photo, analysed anyway.', 'अँधेरी फ़ोटो, फिर भी जाँची गई।'],
+  cluttered: ['ph-stack', 'Busy photo, some items may be merged.', 'बहुत सारी चीज़ें, कुछ छूट सकती हैं।'],
+};
+let lang = (() => { try { return localStorage.getItem('ecosort-lang') === 'hi' ? 'hi' : 'en'; } catch { return 'en'; } })();
+let lastB64 = null; // last prepared photo, re-used when the language is switched
+const recText = (yes) => (lang === 'hi' ? (yes ? HI.yes : HI.no) : (yes ? 'Recyclable' : 'Not recyclable'));
 
 let lastItems = [];     // classifier output, context for Gemini
 let lastReview = null;  // Gemini's judgement of lastItems
@@ -104,7 +121,7 @@ async function postJSON(url, body, timeoutMs) {
 }
 
 function classify(b64) {
-  return MOCK ? mockClassify() : postJSON('/api/classify', { image: b64 }, CLASSIFY_TIMEOUT_MS);
+  return MOCK ? mockClassify() : postJSON('/api/classify', { image: b64, lang }, CLASSIFY_TIMEOUT_MS);
 }
 
 function reviewScan(data) {
@@ -140,7 +157,10 @@ function showError(text) {
 }
 
 function streamInfo(stream) {
-  return STREAMS[stream] ? { key: stream, ...STREAMS[stream] } : { key: 'unknown', ...STREAMS.unknown };
+  const key = STREAMS[stream] ? stream : 'unknown';
+  const s = { key, ...STREAMS[key] };
+  if (lang === 'hi') { s.label = HI.label[key]; s.bin = HI.bin[key]; }
+  return s;
 }
 
 function setIcon(i, name) {
@@ -163,7 +183,11 @@ function renderItem(item, index) {
   const recIcon = document.createElement('i');
   recIcon.setAttribute('aria-hidden', 'true');
   setIcon(recIcon, item.recyclable ? 'ph-recycle' : 'ph-trash');
-  rec.append(recIcon, item.recyclable ? 'Recyclable' : 'Not recyclable');
+  rec.append(recIcon, recText(item.recyclable));
+
+  const why = node.querySelector('.why');
+  node.querySelector('.why-text').textContent = item.reason || '';
+  why.hidden = !item.reason;
 
   const steps = node.querySelector('.steps');
   for (const step of item.disposal || []) {
@@ -184,6 +208,13 @@ function renderResults(data) {
   el.results.replaceChildren(...items.map(renderItem));
   el.message.textContent = items.length ? '' : (data.message || 'No waste item found. Try a closer, well-lit photo.');
   el.message.hidden = items.length > 0;
+  const q = QUALITY[data.quality];
+  el.quality.hidden = !q;
+  if (q) {
+    setIcon(el.quality.querySelector('.ph'), q[0]);
+    el.quality.querySelector('.quality-text').textContent = `${q[lang === 'hi' ? 2 : 1]} ${data.quality_tip || ''}`.trim();
+  }
+  el.speak.hidden = !items.length || !('speechSynthesis' in window);
   if (data.ms != null) {
     const model = (data.model || 'local model').split(':')[0];
     el.footer.textContent = `Last scan: ${model} on-device, ${secs(data.ms)}`;
@@ -427,21 +458,24 @@ async function mockInsight(question) {
 
 // ---------- Wire-up ----------
 
-async function handleFile(file) {
-  if (!file) return;
-  if (!file.type.startsWith('image/')) { showError('That file is not an image. Try a JPG or PNG.'); return; }
+async function handleFile(file, reuseB64) {
+  if (!file && !reuseB64) return;
+  if (file && !file.type.startsWith('image/')) { showError('That file is not an image. Try a JPG or PNG.'); return; }
   const id = ++scanId;
   showError('');
   el.results.replaceChildren();
   el.message.hidden = true;
   el.footer.hidden = true;
   el.review.hidden = true;
+  el.quality.hidden = true;
+  el.speak.hidden = true;
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
   setLoading(true);
   if (matchMedia('(max-width: 900px)').matches) el.resultsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   let data;
   try {
-    const img = await loadImage(file);
-    const b64 = prepareImage(img);
+    const b64 = reuseB64 || prepareImage(await loadImage(file));
+    lastB64 = b64;
     data = await classify(b64);
     if (id !== scanId) return;
     renderResults(data);
@@ -483,6 +517,59 @@ el.askForm.addEventListener('submit', (e) => {
   e.preventDefault();
   ask(el.askInput.value);
 });
+
+// ---------- Read aloud, Hindi toggle, try-on-phone ----------
+
+function speakResults() {
+  if (speechSynthesis.speaking) { speechSynthesis.cancel(); return; } // second click stops
+  const text = lastItems.map((it) => `${it.name}. ${streamInfo(it.stream).bin}. ${recText(it.recyclable)}. ${(it.disposal || [])[0] || ''}`).join(' ');
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = lang === 'hi' ? 'hi-IN' : 'en-IN';
+  const voice = speechSynthesis.getVoices().find((v) => v.lang.replace('_', '-').startsWith(u.lang.slice(0, lang === 'hi' ? 2 : 5)));
+  if (voice) u.voice = voice;
+  u.rate = 0.95;
+  speechSynthesis.speak(u);
+}
+
+function renderLang() {
+  el.langToggle.querySelector('.lang-label').textContent = lang === 'hi' ? 'English' : 'हिन्दी';
+  el.langToggle.setAttribute('aria-label', lang === 'hi' ? 'Show answers in English' : 'Show answers in Hindi');
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = resolve; s.onerror = reject;
+    document.head.append(s);
+  });
+}
+
+async function showPhone() {
+  el.phoneDlg.showModal();
+  el.phoneQr.replaceChildren();
+  el.phoneUrl.textContent = 'Finding this laptop on the network...';
+  let url = '';
+  try {
+    const h = await (await fetch('/api/health')).json();
+    url = h.lan_url && !h.lan_url.includes('?') ? h.lan_url : '';
+  } catch { /* handled below */ }
+  el.phoneUrl.textContent = url || 'No network address found. Connect this laptop to Wi-Fi or a hotspot.';
+  if (!url) return;
+  try { // QR is optional: needs internet for the library; the URL text works without it
+    if (!window.QRCode) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
+    new QRCode(el.phoneQr, { text: url, width: 176, height: 176 });
+  } catch { /* offline: URL text only */ }
+}
+
+el.speak.addEventListener('click', speakResults);
+el.phoneBtn.addEventListener('click', showPhone);
+el.langToggle.addEventListener('click', () => {
+  lang = lang === 'hi' ? 'en' : 'hi';
+  try { localStorage.setItem('ecosort-lang', lang); } catch { /* private mode */ }
+  renderLang();
+  if (lastB64) handleFile(null, lastB64); // re-read the same photo in the new language
+});
+renderLang();
 
 el.mockBadge.hidden = !MOCK;
 initLlmStatus();
