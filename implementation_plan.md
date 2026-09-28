@@ -19,7 +19,7 @@
 | File | Owner |
 |---|---|
 | `server.py`, `static/streams.js` | **B** (backend + model) |
-| `static/index.html`, `static/style.css`, `static/app.js` | **A** (frontend) |
+| `static/index.html`, `static/style.css`, `static/app.js`, `static/gemini.js`, `static/config.js` | **A** (frontend + Gemini) |
 
 ## Contract: `POST /api/classify`
 
@@ -42,6 +42,15 @@ Response:
 }
 ```
 Error: `{ "error": "..." }`
+
+## Gemini layer (A, frontend only — no server work for B)
+
+After `/api/classify` returns, the browser sends the items JSON to **Gemini** (`gemini-3.5-flash`, falls back to `gemini-3.5-flash-lite` on 429/5xx), which:
+1. **Judges** each item: `verdict: correct|check|wrong`, `suggested_stream`, one-line `note` (structured JSON output) → shown on each card.
+2. Writes a 2–3 sentence **summary** → "🧠 AI review" card.
+3. Powers **Ask EcoSort** chat, grounded in the last scan + review.
+
+Key lives in `static/config.js` (gitignored; copy `config.example.js`). The classifier stays offline. Gemini needs internet; if it's unreachable, the cards still show and the review says "unavailable".
 
 `static/streams.js` (B): `STREAMS = { wet: {label, bin:'GREEN bin', color, emoji}, dry: {…'BLUE bin'}, hazardous: {…'Separate — never mix'}, 'e-waste': {…'E-waste collector'}, unknown: {…} }` + `LEARN` examples per stream.
 

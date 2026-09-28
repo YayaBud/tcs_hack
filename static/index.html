@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Snap a photo of your waste. EcoSort names each item and tells you which bin it goes in.">
+  <meta name="theme-color" content="#f7faf7">
+  <title>EcoSort</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d7a53'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%23f7faf7' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="preload" href="vendor/fonts/hanken-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="vendor/fonts/space-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="vendor/phosphor/style.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#results-panel">Skip to results</a>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="topbar-left">
+        <a class="brand" href="./" aria-label="EcoSort home">
+          <i class="ph ph-leaf" aria-hidden="true"></i><span>EcoSort</span>
+        </a>
+        <span id="model-pill" class="pill pill-muted" title="Image classification runs on this laptop">
+          <span class="dot ok" aria-hidden="true"></span>qwen3-vl on-device<span id="model-time" class="pill-time" hidden></span>
+        </span>
+      </div>
+      <div class="topbar-right">
+        <span id="mock-badge" class="pill pill-warn" hidden>Mock data</span>
+        <span id="llm-status" class="pill pill-green" title="Gemini reviews each result">
+          <span class="dot" aria-hidden="true"></span><span class="status-label">Gemini</span>
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <div class="strip-wrap">
+    <div class="strip">
+      <p id="lowlight" class="strip-item" hidden>
+        <i class="ph ph-sun-dim" aria-hidden="true"></i>Low light detected, photo auto-brightened
+      </p>
+      <p class="strip-item strip-muted">
+        <i class="ph ph-lock-simple" aria-hidden="true"></i>Your photo never leaves this laptop. Only item names go to Gemini.
+      </p>
+    </div>
+  </div>
+
+  <main class="layout">
+    <div class="col-left">
+      <section class="card station" aria-labelledby="station-title">
+        <div class="station-head">
+          <div class="station-title">
+            <span class="icon-tile"><i class="ph ph-scan" aria-hidden="true"></i></span>
+            <div>
+              <h1 id="station-title">Which bin does it go in?</h1>
+              <p>Snap or drop a photo. EcoSort names each item and its bin.</p>
+            </div>
+          </div>
+          <span id="scan-state" class="pill pill-muted"><span class="dot ok" aria-hidden="true"></span><span class="scan-label">Ready</span></span>
+        </div>
+
+        <label id="dropzone" class="viewfinder" for="file">
+          <input id="file" type="file" accept="image/*" capture="environment" class="visually-hidden">
+          <span class="reticle" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <canvas id="preview" class="vf-preview" hidden aria-label="Photo being analysed"></canvas>
+          <span class="vf-empty">
+            <span class="btn primary vf-cta"><i class="ph ph-camera" aria-hidden="true"></i>Tap to scan</span>
+            <span class="vf-hint">or drop or paste a waste photo here</span>
+          </span>
+          <span class="laser" aria-hidden="true"></span>
+        </label>
+
+        <div class="station-foot">
+          <p class="foot-note"><i class="ph ph-cpu" aria-hidden="true"></i>Resized and checked for low light before analysis</p>
+          <button id="new-photo" class="btn secondary" type="button">
+            <i class="ph ph-upload-simple" aria-hidden="true"></i>Upload waste photo
+          </button>
+        </div>
+      </section>
+
+      <section class="metrics" aria-label="Your sorting on this device">
+        <div class="card metric">
+          <div class="metric-head"><span class="label">Items sorted</span><span class="metric-icon"><i class="ph ph-squares-four" aria-hidden="true"></i></span></div>
+          <p id="count" class="metric-value">0</p>
+          <p class="metric-sub">On this device</p>
+        </div>
+        <div class="card metric">
+          <div class="metric-head"><span class="label">Kept from landfill</span><span class="metric-icon sage"><i class="ph ph-plant" aria-hidden="true"></i></span></div>
+          <p id="metric-diverted" class="metric-value">0</p>
+          <p class="metric-sub">Recyclable or compostable</p>
+        </div>
+        <div class="card metric">
+          <div class="metric-head"><span class="label">Last analysis</span><span class="metric-icon blue"><i class="ph ph-timer" aria-hidden="true"></i></span></div>
+          <p id="metric-time" class="metric-value">-</p>
+          <p class="metric-sub blue">On-device inference</p>
+        </div>
+      </section>
+    </div>
+
+    <section id="results-panel" class="col-right" aria-labelledby="results-title" tabindex="-1">
+      <div class="card intro">
+        <div class="intro-head">
+          <div>
+            <span class="label accent">SWM Rules 2016</span>
+            <h2 id="results-title">Segregate at source</h2>
+          </div>
+          <span class="pill pill-sage">4 streams</span>
+        </div>
+        <ul id="learn-grid" class="guide"></ul>
+        <p id="footer" class="meta" hidden></p>
+      </div>
+
+      <div id="error" class="alert" role="alert" hidden></div>
+
+      <div id="empty-state" class="card empty">
+        <i class="ph ph-image" aria-hidden="true"></i>
+        <p class="empty-title">Nothing scanned yet</p>
+        <p class="empty-body">Each item appears here with its bin, preparation steps and a check from Gemini.</p>
+      </div>
+
+      <div id="status" class="skeletons" hidden aria-live="polite">
+        <span class="visually-hidden">Analysing on-device</span>
+        <div class="card sk-card"><div class="sk sk-icon"></div><div class="sk-lines"><div class="sk w60"></div><div class="sk w40"></div><div class="sk w80"></div></div></div>
+        <div class="card sk-card"><div class="sk sk-icon"></div><div class="sk-lines"><div class="sk w50"></div><div class="sk w30"></div><div class="sk w70"></div></div></div>
+      </div>
+
+      <section id="review" class="card review" hidden aria-live="polite">
+        <div class="review-head">
+          <i class="ph ph-sparkle" aria-hidden="true"></i>
+          <span class="label accent">Gemini review</span>
+          <span id="review-meta" class="meta"></span>
+        </div>
+        <p id="review-text" class="review-text"></p>
+        <div class="review-sk" aria-hidden="true"><div class="sk w90"></div><div class="sk w70"></div></div>
+      </section>
+
+      <div id="results" class="items"></div>
+      <p id="message" class="card empty-inline" hidden></p>
+
+      <section id="insight" class="card ask" aria-labelledby="ask-title">
+        <div class="ask-head">
+          <span class="icon-tile sm"><i class="ph ph-chat-circle-text" aria-hidden="true"></i></span>
+          <div>
+            <h3 id="ask-title">Ask EcoSort</h3>
+            <p>Reuse, recycling or drop-off questions. Answers use your last scan.</p>
+          </div>
+        </div>
+        <div id="chat" class="chat" aria-live="polite"></div>
+        <div id="suggestions" class="chips" aria-label="Suggested questions"></div>
+        <form id="ask-form" class="ask-form">
+          <label for="ask-input">Your question</label>
+          <div class="ask-row">
+            <input id="ask-input" type="text" placeholder="Can I recycle a greasy pizza box?" autocomplete="off" maxlength="300">
+            <button class="btn primary icon-only" type="submit" aria-label="Send question">
+              <i class="ph ph-paper-plane-right" aria-hidden="true"></i>
+            </button>
+          </div>
+        </form>
+      </section>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <svg class="meadow" viewBox="0 0 1440 120" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0,120 C40,90 70,50 95,35 C120,50 140,90 160,120 Z" fill="#005f3f"/>
+      <path d="M130,120 C160,75 190,30 215,18 C240,35 265,85 290,120 Z" fill="#0d7a53"/>
+      <path d="M260,120 C290,85 315,55 340,40 C365,60 385,95 410,120 Z" fill="#7cd9aa" fill-opacity=".7"/>
+      <path d="M380,120 C405,70 435,28 465,14 C495,32 520,80 545,120 Z" fill="#005f3f"/>
+      <path d="M520,120 C545,85 570,58 600,42 C630,62 650,98 675,120 Z" fill="#0d7a53"/>
+      <path d="M640,120 C670,68 700,25 730,10 C760,28 790,76 820,120 Z" fill="#486551"/>
+      <path d="M790,120 C820,82 850,46 880,30 C910,52 930,92 960,120 Z" fill="#005f3f"/>
+      <path d="M930,120 C955,72 985,32 1015,18 C1045,36 1070,85 1100,120 Z" fill="#0d7a53"/>
+      <path d="M1070,120 C1100,86 1130,54 1160,34 C1190,56 1210,96 1240,120 Z" fill="#7cd9aa" fill-opacity=".8"/>
+      <path d="M1210,120 C1240,68 1270,28 1305,14 C1340,32 1370,78 1400,120 Z" fill="#005f3f"/>
+      <path d="M1370,120 C1395,86 1420,55 1440,40 L1440,120 Z" fill="#0d7a53"/>
+    </svg>
+    <div class="footer-bar">
+      <span><i class="ph ph-leaf" aria-hidden="true"></i>EcoSort, built for Indian household segregation</span>
+      <span>Classifier on-device, review by Gemini</span>
+    </div>
+  </footer>
+
+  <template id="item-tpl">
+    <article class="card item">
+      <div class="item-top">
+        <span class="item-icon"><i class="ph" aria-hidden="true"></i></span>
+        <div class="item-title">
+          <h3 class="name"></h3>
+          <p class="item-sub"><span class="material"></span><span class="stream"></span><span class="recyclable"></span></p>
+        </div>
+        <span class="bin-pill"><span class="bin-dot" aria-hidden="true"></span><span class="bin"></span></span>
+      </div>
+      <div class="prep">
+        <span class="label">Preparation steps</span>
+        <ol class="steps"></ol>
+      </div>
+      <p class="tip"><i class="ph ph-lightbulb" aria-hidden="true"></i><span class="tip-text"></span></p>
+      <p class="verdict" hidden><i class="ph" aria-hidden="true"></i><span class="verdict-text"></span></p>
+    </article>
+  </template>
+
+  <script src="config.js"></script>
+  <script src="streams.js"></script>
+  <script src="gemini.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
